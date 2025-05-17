@@ -45,64 +45,140 @@ def convert_date_format(date_str):
 
 
 def format_currency_usd(amount):
-    """Formata moeda em USD"""
-    return f"${amount:.2f}"
+    """Formata valor em formato decimal brasileiro sem símbolo de moeda"""
+    return f"{amount:.2f}".replace('.', ',')
 
 
 def format_currency_brl(amount):
-    """Formata moeda em BRL"""
-    return f"R$ {amount:.2f}"
+    """Formata valor em formato decimal brasileiro sem símbolo de moeda"""
+    return f"{amount:.2f}".replace('.', ',')
+
+
+def format_number_br(value):
+    """Formata número no formato decimal brasileiro (vírgula como separador decimal)"""
+    return f"{value:.4f}".replace('.', ',')
 
 
 def create_csv(transaction_data, exchange_rates):
-    """Cria arquivo CSV com dados da transação"""
-    transaction_rate, acquisition_rate = exchange_rates
-
-    # Calcula valores derivados
+    """Cria arquivo CSV com dados da transação, suportando múltiplos lotes de aquisição"""
+    transaction_rate, acquisition_rates = exchange_rates
+    
+    # Valores comuns para todas as linhas
     costs = transaction_data["commission"] + transaction_data["supplemental_fee"]
     total_proceeds = transaction_data["total_value"]
     net_proceeds = total_proceeds - costs
     net_proceeds_brl = net_proceeds * transaction_rate  # Taxa de compra para venda de ações
-
-    acquisition_cost_total = transaction_data["quantity"] * transaction_data["cost_basis_per_share"]
-    acquisition_cost_brl = acquisition_cost_total * acquisition_rate  # Taxa de venda para compra de ações
-
-    # Formata datas
+    
+    # Formata data da transação
     transaction_date = convert_date_format(transaction_data["transaction_date"])
-    acquisition_date = convert_date_format(transaction_data["acquisition_date"])
-
-    # Cria dados CSV
-    csv_data = [
-        {
+    
+    # Obtém os lotes de aquisição
+    acquisition_lots = transaction_data["acquisition_lots"]
+    
+    # Verifica se a soma das quantidades dos lotes é igual à quantidade total vendida
+    total_lot_quantity = sum(lot["quantity"] for lot in acquisition_lots)
+    if total_lot_quantity != transaction_data["quantity"]:
+        print(f"AVISO: A soma das quantidades dos lotes ({total_lot_quantity}) não corresponde à quantidade total vendida ({transaction_data['quantity']})")
+        print("Ajustando proporcionalmente...")
+        
+        # Ajusta proporcionalmente as quantidades dos lotes
+        adjustment_factor = transaction_data["quantity"] / total_lot_quantity
+        for lot in acquisition_lots:
+            lot["quantity"] = round(lot["quantity"] * adjustment_factor)
+        
+        # Verifica novamente e ajusta o último lote se necessário
+        adjusted_total = sum(lot["quantity"] for lot in acquisition_lots)
+        if adjusted_total != transaction_data["quantity"]:
+            difference = transaction_data["quantity"] - adjusted_total
+            acquisition_lots[-1]["quantity"] += difference
+    
+    # Cria dados CSV para cada lote
+    csv_data = []
+    
+    # Armazena os valores distribuídos para verificação posterior
+    distributed_costs = 0
+    distributed_proceeds = 0
+    distributed_net_proceeds = 0
+    distributed_net_proceeds_brl = 0
+    
+    for i, lot in enumerate(acquisition_lots):
+        # Calcula a proporção deste lote em relação ao total
+        lot_proportion = lot["quantity"] / transaction_data["quantity"]
+        
+        # Distribui os custos e valores proporcionalmente
+        # Para o último lote, usamos a diferença para garantir precisão total
+        if i == len(acquisition_lots) - 1:
+            lot_costs = costs - distributed_costs
+            lot_proceeds = total_proceeds - distributed_proceeds
+            lot_net_proceeds = net_proceeds - distributed_net_proceeds
+            lot_net_proceeds_brl = net_proceeds_brl - distributed_net_proceeds_brl
+        else:
+            lot_costs = costs * lot_proportion
+            lot_proceeds = total_proceeds * lot_proportion
+            lot_net_proceeds = net_proceeds * lot_proportion
+            lot_net_proceeds_brl = net_proceeds_brl * lot_proportion
+            
+            # Acumula os valores distribuídos
+            distributed_costs += lot_costs
+            distributed_proceeds += lot_proceeds
+            distributed_net_proceeds += lot_net_proceeds
+            distributed_net_proceeds_brl += lot_net_proceeds_brl
+        
+        # Calcula custos de aquisição para este lote
+        acquisition_cost_total = lot["quantity"] * lot["cost_basis_per_share"]
+        
+        # Obtém a taxa de câmbio para a data de aquisição deste lote
+        acquisition_date = convert_date_format(lot["acquisition_date"])
+        
+        # Se temos apenas uma taxa de aquisição, usamos ela para todos os lotes
+        if not isinstance(acquisition_rates, list):
+            acquisition_rate = acquisition_rates
+        else:
+            # Se temos múltiplas taxas, usamos a correspondente ao índice do lote
+            # Se não tivermos taxas suficientes, usamos a última
+            acquisition_rate = acquisition_rates[min(i, len(acquisition_rates)-1)]
+        
+        acquisition_cost_brl = acquisition_cost_total * acquisition_rate
+        
+        # Calcula o lucro real para este lote
+        lot_profit_usd = lot_net_proceeds - acquisition_cost_total
+        lot_profit_brl = lot_net_proceeds_brl - acquisition_cost_brl
+        
+        # Cria linha CSV para este lote
+        csv_row = {
             "Data": transaction_date,
             "Ação": transaction_data["ticker"],
             "Operação": "venda",
-            "Quantidade": transaction_data["quantity"],
+            "Quantidade": lot["quantity"],
             "Valor ação (dolar)": format_currency_usd(transaction_data["share_value"]),
-            "Total (dolar)": format_currency_usd(total_proceeds),
-            "Custos": format_currency_usd(costs),
-            "Operação - custos": format_currency_usd(net_proceeds),
-            "Operação - custos (R$)": format_currency_brl(net_proceeds_brl),
-            "Câmbio (compra)": transaction_rate,
+            "Total (dolar)": format_currency_usd(lot_proceeds),
+            "Custos": format_currency_usd(lot_costs),
+            "Operação - custos": format_currency_usd(lot_net_proceeds),
+            "Operação - custos (R$)": format_currency_brl(lot_net_proceeds_brl),
+            "Câmbio (compra)": format_number_br(transaction_rate),
+            "": "",  # Coluna com título vazio
             "Data aquisição": acquisition_date,
-            "Custo aquisição": format_currency_usd(transaction_data["cost_basis_per_share"]),
-            "Cambio aquisição (venda)": acquisition_rate,
+            "Custo aquisição": format_currency_usd(lot["cost_basis_per_share"]),
+            "Cambio aquisição (venda)": format_number_br(acquisition_rate),
             "Custo aquisição total": format_currency_usd(acquisition_cost_total),
             "Custo aquisição total (R$)": format_currency_brl(acquisition_cost_brl),
-            "Lucro (dolar)": "$0.00",
-            "Lucro (reais)": "R$ 0.00"
+            "Lucro (dolar)": format_currency_usd(lot_profit_usd),
+            "Lucro (reais)": format_currency_brl(lot_profit_brl)
         }
-    ]
-
+        
+        csv_data.append(csv_row)
+    
+    # Cria o arquivo CSV
     output_file = f"{transaction_data['ticker']}_transaction_{transaction_date.replace('/', '-')}.csv"
-
+    
     with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = csv_data[0].keys()
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(csv_data)
-
+    
     print(f"\nArquivo CSV criado: {output_file}")
+    print(f"Total de linhas: {len(csv_data)} (um para cada lote de aquisição)")
     return output_file
 
 
@@ -118,13 +194,17 @@ def extract_transaction_data_from_pdf(pdf_path):
 1. Data da transação (da seção "Fill summary", quando as ações foram realmente vendidas)
 2. Símbolo da ação (ticker)
 3. Tipo de operação (venda)
-4. Quantidade de ações vendidas
+4. Quantidade total de ações vendidas
 5. Valor por ação em USD (Market Price per Unit)
 6. Valor total da transação em USD (Proceeds)
 7. Custo de comissão em USD
 8. Taxa suplementar de transação em USD
-9. Data de aquisição das ações
-10. Custo base original por ação em USD
+9. Informações de aquisição para cada lote:
+   - Data de aquisição
+   - Quantidade de ações neste lote
+   - Custo base original por ação em USD para este lote
+
+IMPORTANTE: Pode haver múltiplos lotes de aquisição com datas diferentes. Identifique TODOS os lotes e suas respectivas quantidades e custos base.
         
 Comece incluindo todos os pensamentos dentro de tags <thinking>, explorando múltiplos ângulos e abordagens.
 Divida a solução em etapas claras dentro de tags <step>. Comece com um orçamento de 50 passos, solicitando mais passos para problemas complexos se necessário.
@@ -152,8 +232,18 @@ Responda entre tags <answer> com um objeto JSON com esta estrutura:
     "total_value": ###.##,
     "commission": ##.##,
     "supplemental_fee": #.##,
-    "acquisition_date": "DD-MM-YYYY",
-    "cost_basis_per_share": ###.##
+    "acquisition_lots": [
+        {
+            "acquisition_date": "DD-MM-YYYY",
+            "quantity": ###,
+            "cost_basis_per_share": ###.##
+        },
+        {
+            "acquisition_date": "DD-MM-YYYY",
+            "quantity": ###,
+            "cost_basis_per_share": ###.##
+        }
+    ]
 }
         
 Conclua com uma reflexão final sobre a solução geral, discutindo eficácia, desafios e soluções. Atribua uma pontuação final de recompensa.        
@@ -166,18 +256,15 @@ Conclua com uma reflexão final sobre a solução geral, discutindo eficácia, d
             document_format="pdf",
             temperature=0,
             max_new_tokens=4096,
-            verbose=True
+            verbose=False
         )
 
         # Extrai o JSON da resposta
         output_text = response.output
         json_match = extract_last_item_from_tagged_list(output_text, "answer")
 
-        # json_match = re.search(r'({.*})', output_text, re.DOTALL)
-
         if json_match:
             try:
-                # extracted_data = json.loads(json_match.group(1))
                 extracted_data = json.loads(json_match)
                 return extracted_data
             except json.JSONDecodeError:
@@ -215,16 +302,37 @@ def main():
     print(f"Valor Total: ${transaction_data['total_value']}")
     print(f"Comissão: ${transaction_data['commission']}")
     print(f"Taxa Suplementar: ${transaction_data['supplemental_fee']}")
-    print(f"Data de Aquisição: {convert_date_format(transaction_data['acquisition_date'])}")
-    print(f"Custo de Aquisição: ${transaction_data['cost_basis_per_share']}")
+    
+    print("\nLotes de Aquisição:")
+    for i, lot in enumerate(transaction_data['acquisition_lots']):
+        print(f"  Lote {i+1}:")
+        print(f"    Data: {convert_date_format(lot['acquisition_date'])}")
+        print(f"    Quantidade: {lot['quantity']}")
+        print(f"    Custo por Ação: ${lot['cost_basis_per_share']}")
 
-    # Formata as datas para o formato DD/MM/YYYY para uso na API do Banco Central
+    # Formata a data da transação para o formato DD/MM/YYYY para uso na API do Banco Central
     transaction_date = convert_date_format(transaction_data['transaction_date'])
-    acquisition_date = convert_date_format(transaction_data['acquisition_date'])
-
+    
+    # Coleta todas as datas de aquisição para buscar taxas de câmbio
+    acquisition_dates = [convert_date_format(lot['acquisition_date']) for lot in transaction_data['acquisition_lots']]
+    
+    print("\nBuscando taxas de câmbio para a data da transação e todas as datas de aquisição...")
+    
     # Obtém as taxas de câmbio automaticamente ou manualmente
-    exchange_rates = get_exchange_rates_interactive(transaction_date, acquisition_date)
-
+    # Primeiro para a data da transação
+    print(f"\nBuscando taxa para data da venda ({transaction_date})...")
+    transaction_rate = get_exchange_rates_interactive(transaction_date, None)[0]
+    
+    # Agora para cada data de aquisição
+    acquisition_rates = []
+    for date in acquisition_dates:
+        print(f"\nBuscando taxa para data de aquisição ({date})...")
+        acquisition_rate = get_exchange_rates_interactive(None, date)[1]
+        acquisition_rates.append(acquisition_rate)
+    
+    # Combina as taxas
+    exchange_rates = (transaction_rate, acquisition_rates)
+    
     output_file = create_csv(transaction_data, exchange_rates)
 
     print("\nConcluído! Os dados da transação foram extraídos e salvos.")

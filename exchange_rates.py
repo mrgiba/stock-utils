@@ -149,20 +149,40 @@ def get_exchange_rates_interactive(transaction_date, acquisition_date):
     Por padrão, busca automaticamente do Banco Central
     
     Args:
-        transaction_date: Data da transação no formato DD/MM/YYYY
-        acquisition_date: Data da aquisição no formato DD/MM/YYYY
+        transaction_date: Data da transação no formato DD/MM/YYYY (pode ser None)
+        acquisition_date: Data da aquisição no formato DD/MM/YYYY (pode ser None)
         
     Returns:
         tuple: (taxa_compra_atual, taxa_compra_aquisicao)
     """
-    print("\nBuscando automaticamente as taxas de câmbio do Banco Central...")
-    print("(Pressione Ctrl+C para cancelar e inserir manualmente)")
+    transaction_rate = None
+    acquisition_rate = None
     
     try:
-        return get_exchange_rates_auto(transaction_date, acquisition_date)
+        if transaction_date:
+            print(f"Buscando taxa para data da venda ({transaction_date})...")
+            transaction_rate = get_exchange_rate_from_bcb(transaction_date, operation_type="venda")
+            if transaction_rate:
+                print(f"Taxa de câmbio na data da venda ({transaction_date}): {transaction_rate:.4f}")
+            else:
+                print("Não foi possível obter a taxa de câmbio para a data da venda.")
+                transaction_rate = float(input("Por favor, forneça a taxa de COMPRA do dólar (USD para BRL): ").replace(',', '.'))
+        
+        if acquisition_date:
+            print(f"Buscando taxa para data da aquisição ({acquisition_date})...")
+            acquisition_rate = get_exchange_rate_from_bcb(acquisition_date, operation_type="compra")
+            if acquisition_rate:
+                print(f"Taxa de câmbio na data da aquisição ({acquisition_date}): {acquisition_rate:.4f}")
+            else:
+                print("Não foi possível obter a taxa de câmbio na data de aquisição.")
+                acquisition_rate = float(input("Por favor, forneça a taxa de VENDA do dólar (USD para BRL): ").replace(',', '.'))
+    
     except KeyboardInterrupt:
         print("\n\nBusca automática cancelada.")
-        print("\nPor favor, forneça as seguintes taxas de câmbio:")
-        transaction_rate = float(input("Taxa de COMPRA do dólar na data da venda (USD para BRL): ").replace(',', '.'))
-        acquisition_rate = float(input("Taxa de VENDA do dólar na data da aquisição (USD para BRL): ").replace(',', '.'))
-        return transaction_rate, acquisition_rate
+        if transaction_date and not transaction_rate:
+            transaction_rate = float(input("Taxa de COMPRA do dólar na data da venda (USD para BRL): ").replace(',', '.'))
+        if acquisition_date and not acquisition_rate:
+            acquisition_rate = float(input("Taxa de VENDA do dólar na data da aquisição (USD para BRL): ").replace(',', '.'))
+    
+    # Se alguma das datas não foi fornecida, retorna None para essa taxa
+    return (transaction_rate, acquisition_rate)
