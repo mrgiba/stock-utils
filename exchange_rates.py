@@ -1,6 +1,5 @@
 import requests
 from datetime import datetime, timedelta
-import json
 
 def format_date_for_api(date_str):
     """
@@ -50,10 +49,8 @@ def get_exchange_rate_from_bcb(date_str, operation_type="venda"):
             # Para compra de ações (pagamento em USD): usar taxa de venda do dólar
             if operation_type.lower() == "venda":
                 rate = float(data['value'][0]['cotacaoCompra'])
-                rate_type = "compra"
             else:  # compra
                 rate = float(data['value'][0]['cotacaoVenda'])
-                rate_type = "venda"
                 
             return rate
         else:

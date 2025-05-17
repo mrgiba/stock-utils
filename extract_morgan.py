@@ -59,7 +59,101 @@ def format_number_br(value):
     return f"{value:.4f}".replace('.', ',')
 
 
-def create_csv(transaction_data, exchange_rates):
+def get_pdf_files(pdf_paths, is_directory):
+    """
+    Obtém a lista de arquivos PDF a serem processados.
+    
+    Args:
+        pdf_paths: Lista de caminhos fornecidos pelo usuário
+        is_directory: Se True, trata o primeiro caminho como um diretório
+        
+    Returns:
+        list: Lista de caminhos de arquivos PDF
+    """
+    
+    if is_directory:
+        # Assume que o primeiro argumento é um diretório
+        pdf_dir = pdf_paths[0]
+        if not os.path.isdir(pdf_dir):
+            print(f"Erro: '{pdf_dir}' não é um diretório válido.")
+            sys.exit(1)
+            
+        # Lista todos os arquivos PDF no diretório
+        pdf_files = [os.path.join(pdf_dir, f) for f in os.listdir(pdf_dir) if f.lower().endswith('.pdf')]
+        if not pdf_files:
+            print(f"Nenhum arquivo PDF encontrado no diretório '{pdf_dir}'.")
+            sys.exit(1)
+    else:
+        # Usa os caminhos fornecidos diretamente
+        pdf_files = pdf_paths
+        # Verifica se todos os arquivos existem
+        for pdf_path in pdf_files:
+            if not os.path.exists(pdf_path):
+                print(f"Erro: O arquivo PDF '{pdf_path}' não existe.")
+                sys.exit(1)
+    
+    return pdf_files
+
+
+def display_transaction_data(transaction_data):
+    """
+    Exibe os dados da transação extraídos do PDF.
+    
+    Args:
+        transaction_data: Dicionário com os dados da transação
+    """
+    print("\nDados de Transação Extraídos:")
+    print(f"Data: {convert_date_format(transaction_data['transaction_date'])}")
+    print(f"Ação: {transaction_data['ticker']}")
+    print(f"Quantidade: {transaction_data['quantity']}")
+    print(f"Preço por Ação: ${transaction_data['share_value']}")
+    print(f"Valor Total: ${transaction_data['total_value']}")
+    print(f"Comissão: ${transaction_data['commission']}")
+    print(f"Taxa Suplementar: ${transaction_data['supplemental_fee']}")
+    
+    print("\nLotes de Aquisição:")
+    for j, lot in enumerate(transaction_data['acquisition_lots']):
+        print(f"  Lote {j+1}:")
+        print(f"    Data: {convert_date_format(lot['acquisition_date'])}")
+        print(f"    Quantidade: {lot['quantity']}")
+        print(f"    Custo por Ação: ${lot['cost_basis_per_share']}")
+
+
+def get_exchange_rates(transaction_data):
+    """
+    Obtém as taxas de câmbio para as datas de transação e aquisição.
+    
+    Args:
+        transaction_data: Dicionário com os dados da transação
+        
+    Returns:
+        tuple: (taxa_transacao, [taxas_aquisicao])
+    """
+    # Formata a data da transação para o formato DD/MM/YYYY para uso na API do Banco Central
+    transaction_date = convert_date_format(transaction_data['transaction_date'])
+    
+    # Coleta todas as datas de aquisição para buscar taxas de câmbio
+    acquisition_dates = [convert_date_format(lot['acquisition_date']) for lot in transaction_data['acquisition_lots']]
+    
+    print("\nBuscando taxas de câmbio para a data da transação e todas as datas de aquisição...")
+    
+    # Obtém as taxas de câmbio automaticamente ou manualmente
+    # Primeiro para a data da transação
+    print(f"\nBuscando taxa para data da venda ({transaction_date})...")
+    transaction_rate = get_exchange_rates_interactive(transaction_date, None)[0]
+    
+    # Agora para cada data de aquisição
+    acquisition_rates = []
+    for date in acquisition_dates:
+        print(f"\nBuscando taxa para data de aquisição ({date})...")
+        acquisition_rate = get_exchange_rates_interactive(None, date)[1]
+        acquisition_rates.append(acquisition_rate)
+    
+    # Combina as taxas
+    return (transaction_rate, acquisition_rates)
+
+
+def create_csv(transaction_data, exchange_rates, output_dir="output"):
     """Cria arquivo CSV com dados da transação, suportando múltiplos lotes de aquisição"""
     transaction_rate, acquisition_rates = exchange_rates
     
@@ -168,18 +262,22 @@ def create_csv(transaction_data, exchange_rates):
         
         csv_data.append(csv_row)
     
-    # Cria o arquivo CSV
-    output_file = f"{transaction_data['ticker']}_transaction_{transaction_date.replace('/', '-')}.csv"
+    # Cria o diretório de saída se não existir
+    os.makedirs(output_dir, exist_ok=True)
     
-    with open(output_file, 'w', newline='', encoding='utf-8') as csvfile:
+    # Cria o arquivo CSV no diretório de saída
+    output_filename = f"{transaction_data['ticker']}_transaction_{transaction_date.replace('/', '-')}.csv"
+    output_path = os.path.join(output_dir, output_filename)
+    
+    with open(output_path, 'w', newline='', encoding='utf-8') as csvfile:
         fieldnames = csv_data[0].keys()
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(csv_data)
     
-    print(f"\nArquivo CSV criado: {output_file}")
-    print(f"Total de linhas: {len(csv_data)} (um para cada lote de aquisição)")
-    return output_file
+    print(f"\nArquivo CSV criado: {output_path}")
+
+    return output_path
 
 
 def extract_transaction_data_from_pdf(pdf_path):
@@ -255,7 +353,7 @@ Conclua com uma reflexão final sobre a solução geral, discutindo eficácia, d
             document_content=pdf_content,
             document_format="pdf",
             temperature=0,
-            max_new_tokens=4096,
+            max_new_tokens=8192,
             verbose=False
         )
 
@@ -282,60 +380,73 @@ Conclua com uma reflexão final sobre a solução geral, discutindo eficácia, d
         sys.exit(1)
 
 
+def process_pdf(pdf_path, output_dir):
+    """
+    Processa um único arquivo PDF, extraindo dados e gerando o CSV.
+    
+    Args:
+        pdf_path: Caminho para o arquivo PDF
+        output_dir: Diretório onde o CSV será salvo
+        
+    Returns:
+        bool: True se o processamento foi bem-sucedido, False caso contrário
+    """
+    try:
+        print("Enviando PDF para LLM...")
+        # Extrai os dados do PDF
+        transaction_data = extract_transaction_data_from_pdf(pdf_path)
+        
+        # Exibe os dados extraídos
+        display_transaction_data(transaction_data)
+        
+        # Obtém as taxas de câmbio
+        exchange_rates = get_exchange_rates(transaction_data)
+        
+        # Gera o CSV para este PDF
+        create_csv(transaction_data, exchange_rates, output_dir)
+
+        return True
+        
+    except Exception as e:
+        print(f"Erro ao processar {pdf_path}: {e}")
+        traceback.print_exc()
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(description='Extrai dados de transação de PDF da Morgan Stanley')
-    parser.add_argument('pdf_path', help='Caminho para o arquivo PDF da Morgan Stanley')
+    parser.add_argument('pdf_paths', nargs='+', help='Caminhos para os arquivos PDF da Morgan Stanley ou diretório contendo PDFs')
+    parser.add_argument('-d', '--dir', action='store_true', help='Tratar o argumento como diretório contendo PDFs')
+    parser.add_argument('-o', '--output', default='output', help='Diretório de saída para os arquivos CSV (padrão: output)')
     args = parser.parse_args()
 
-    if not os.path.exists(args.pdf_path):
-        print(f"Erro: O arquivo PDF '{args.pdf_path}' não existe.")
-        sys.exit(1)
+    # Obtém a lista de arquivos PDF a serem processados
+    pdf_files = get_pdf_files(args.pdf_paths, args.dir)
+    
+    # Cria o diretório de saída se não existir
+    os.makedirs(args.output, exist_ok=True)
+    
+    print(f"Processando {len(pdf_files)} arquivo(s) PDF...")
+    
+    # Processa cada arquivo PDF
+    successful = 0
+    failed = 0
+    
+    for i, pdf_path in enumerate(pdf_files, 1):
+        print(f"\n[{i}/{len(pdf_files)}] Processando: {os.path.basename(pdf_path)}")
+        
+        if process_pdf(pdf_path, args.output):
+            successful += 1
+        else:
+            failed += 1
+            print("Continuando com o próximo arquivo...")
 
-    print("Enviando PDF para Claude via Bedrock Converse...")
-    transaction_data = extract_transaction_data_from_pdf(args.pdf_path)
-
-    print("\nDados de Transação Extraídos:")
-    print(f"Data: {convert_date_format(transaction_data['transaction_date'])}")
-    print(f"Ação: {transaction_data['ticker']}")
-    print(f"Quantidade: {transaction_data['quantity']}")
-    print(f"Preço por Ação: ${transaction_data['share_value']}")
-    print(f"Valor Total: ${transaction_data['total_value']}")
-    print(f"Comissão: ${transaction_data['commission']}")
-    print(f"Taxa Suplementar: ${transaction_data['supplemental_fee']}")
-    
-    print("\nLotes de Aquisição:")
-    for i, lot in enumerate(transaction_data['acquisition_lots']):
-        print(f"  Lote {i+1}:")
-        print(f"    Data: {convert_date_format(lot['acquisition_date'])}")
-        print(f"    Quantidade: {lot['quantity']}")
-        print(f"    Custo por Ação: ${lot['cost_basis_per_share']}")
-
-    # Formata a data da transação para o formato DD/MM/YYYY para uso na API do Banco Central
-    transaction_date = convert_date_format(transaction_data['transaction_date'])
-    
-    # Coleta todas as datas de aquisição para buscar taxas de câmbio
-    acquisition_dates = [convert_date_format(lot['acquisition_date']) for lot in transaction_data['acquisition_lots']]
-    
-    print("\nBuscando taxas de câmbio para a data da transação e todas as datas de aquisição...")
-    
-    # Obtém as taxas de câmbio automaticamente ou manualmente
-    # Primeiro para a data da transação
-    print(f"\nBuscando taxa para data da venda ({transaction_date})...")
-    transaction_rate = get_exchange_rates_interactive(transaction_date, None)[0]
-    
-    # Agora para cada data de aquisição
-    acquisition_rates = []
-    for date in acquisition_dates:
-        print(f"\nBuscando taxa para data de aquisição ({date})...")
-        acquisition_rate = get_exchange_rates_interactive(None, date)[1]
-        acquisition_rates.append(acquisition_rate)
-    
-    # Combina as taxas
-    exchange_rates = (transaction_rate, acquisition_rates)
-    
-    output_file = create_csv(transaction_data, exchange_rates)
-
-    print("\nConcluído! Os dados da transação foram extraídos e salvos.")
+    print("\nProcessamento concluído!")
+    if len(pdf_files) > 1:
+        print(f"Total de arquivos: {len(pdf_files)}")
+        print(f"Processados com sucesso: {successful}")
+        print(f"Falhas: {failed}")
+        print(f"Arquivos CSV gerados estão no diretório: {args.output}")
 
 
 if __name__ == "__main__":
