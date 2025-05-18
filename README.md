@@ -1,6 +1,6 @@
-# Extrator de Dados de Transações Morgan Stanley
+# Stock Utils - Ferramentas para Gestão de Ações
 
-Este projeto automatiza a extração de dados de transações de ações da Morgan Stanley
+Este projeto inclui ferramentas para automatizar a extração de dados de transações de ações da Morgan Stanley e consultar cotações do dólar do Banco Central do Brasil
 
 ## Funcionalidades
 
@@ -10,7 +10,7 @@ Este projeto automatiza a extração de dados de transações de ações da Morg
 
 ## Requisitos
 
-- Python 3.8+
+- Python 3.11+
 - Credenciais AWS configuradas para acesso ao Bedrock
 - Conexão com internet para acesso à API do Banco Central
 
@@ -69,4 +69,27 @@ O script busca automaticamente as taxas de câmbio do Banco Central do Brasil pa
 Caso não seja possível obter as taxas automaticamente (por exemplo, em feriados ou finais de semana), o script tentará buscar a taxa do dia útil anterior.
 
 Se você preferir inserir as taxas manualmente, pressione Ctrl+C durante a busca automática.
+
+### Utilitário de Consulta de Cotações
+
+O projeto também inclui um utilitário independente para consultar cotações do dólar diretamente do Banco Central:
+
+```
+python cotacao_dolar_bcb.py [opções]
+```
+
+Opções disponíveis:
+- `-d, --data DATA`: Consulta cotação para uma data específica (formato DD/MM/AAAA)
+- `-p, --periodo INICIO FIM`: Consulta cotações para um período (formato DD/MM/AAAA DD/MM/AAAA)
+- `-o, --output ARQUIVO`: Salva os resultados em um arquivo CSV
+- `--quiet`: Não exibe os resultados na tela
+
+Exemplos:
+```
+# Consultar cotação para uma data específica
+python cotacao_dolar_bcb.py -d 15/05/2023
+
+# Consultar cotações para um período e salvar em CSV
+python cotacao_dolar_bcb.py -p 01/01/2023 31/01/2023 -o cotacoes_janeiro.csv
+```
 
