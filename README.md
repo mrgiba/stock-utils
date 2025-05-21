@@ -55,6 +55,37 @@ O script irá:
 2. Buscar automaticamente as taxas de câmbio do Banco Central (pressione Ctrl+C para inserir manualmente)
 3. Gerar um arquivo CSV com os dados formatados
 
+### Conversão para formato Bastter System
+
+Para converter os dados de transações para o formato aceito pelo Bastter System:
+
+```
+python convert_to_bastter.py [opções]
+```
+
+Opções disponíveis:
+- `-i, --input ARQUIVO`: Especifica o arquivo CSV de entrada (padrão: transacoes.csv)
+- `-o, --output ARQUIVO`: Especifica o arquivo XLSX de saída (padrão: bastter_import.xlsx)
+
+Exemplos:
+```
+# Usar os nomes de arquivo padrão
+python convert_to_bastter.py
+
+# Especificar arquivos de entrada e saída
+python convert_to_bastter.py -i minhas_transacoes.csv -o importar_bastter.xlsx
+```
+
+O script irá:
+1. Ler o arquivo CSV de entrada
+2. Processar os dados conforme o formato do Bastter System:
+   - 1ª coluna: ticker
+   - 2ª coluna: data
+   - 3ª coluna: quantidade (positiva para compra, negativa para venda)
+   - 4ª coluna: total + custos (para compra) / total - custos (para venda)
+   - 5ª coluna: 0,00 (para compra) / total sem descontar custos (para venda)
+3. Gerar um arquivo XLSX pronto para importação no Bastter System
+
 ## Formato de PDF Suportado
 
 O extrator foi projetado para trabalhar com os PDFs de confirmação de transação da Morgan Stanley.
